@@ -19,15 +19,26 @@ except Exception:
 if USE_SHEETS:
     import gspread
     from google.oauth2.service_account import Credentials
+
+    # Kun Sheets‑scope er nødvendigt, når vi åbner med sheet‑ID
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-    CREDS = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    CREDS = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=SCOPES
+    )
     GC = gspread.authorize(CREDS)
-    SH = GC.open(st.secrets["gsheet_name"])  # Create a sheet and put its name in secrets
+
+    # Åbn arket via ID (mest stabilt). Fald tilbage til navn hvis ID ikke findes i secrets
+    if "gsheet_id" in st.secrets and st.secrets["gsheet_id"]:
+        SH = GC.open_by_key(st.secrets["gsheet_id"])
+    else:
+        SH = GC.open(st.secrets["gsheet_name"])  # kræver Drive‑søgning
+
     def ws(name):
         try:
             return SH.worksheet(name)
         except Exception:
             return SH.add_worksheet(title=name, rows=1000, cols=20)
+
     WS_BEANS = ws("beans")
     WS_ENTRIES = ws("entries")
 
