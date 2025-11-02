@@ -1,11 +1,35 @@
 import io
 import math
 import re
+import json
 import pandas as pd
 import streamlit as st
 
 # --------------------------- App Config ------------------------------------
 st.set_page_config(page_title="Espresso Advisor", page_icon="☕", layout="wide")
+
+# --------------------------- Optional persistence backends -----------------
+USE_SHEETS = False
+try:
+    if "gcp_service_account" in st.secrets and "gsheet_name" in st.secrets:
+        USE_SHEETS = True
+except Exception:
+    USE_SHEETS = False
+
+if USE_SHEETS:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+    CREDS = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    GC = gspread.authorize(CREDS)
+    SH = GC.open(st.secrets["gsheet_name"])  # Create a sheet and put its name in secrets
+    def ws(name):
+        try:
+            return SH.worksheet(name)
+        except Exception:
+            return SH.add_worksheet(title=name, rows=1000, cols=20)
+    WS_BEANS = ws("beans")
+    WS_ENTRIES = ws("entries")
 
 # --------------------------- Helpers ---------------------------------------
 def slugify(s: str) -> str:
@@ -38,17 +62,98 @@ def recommend(ratio, time_sec, target_out):
 
 PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"]
 
+# --------------------------- User id ---------------------------------------
+def get_user_id():
+    # Try Streamlit Cloud user
+    uid = None
+    try:
+        u = st.experimental_user
+        if u and getattr(u, "email", None):
+            uid = u.email
+    except Exception:
+        uid = None
+    # Fallback to input
+    if not uid:
+        uid = st.sidebar.text_input("Bruger-ID (mail ell. valgfrit)", value=st.session_state.get("user_id", ""), key="k_user")
+    if uid:
+        st.session_state.user_id = uid
+    return uid
+
+USER_ID = get_user_id()
+if USE_SHEETS and not USER_ID:
+    st.warning("Angiv et Bruger-ID i sidemenuen for at gemme på tværs af sessioner.")
+
+# --------------------------- Load/save (Sheets) -----------------------------
+def load_from_sheets(user_id):
+    beans = {}
+    # Ensure headers
+    if len(WS_BEANS.get_all_values()) == 0:
+        WS_BEANS.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
+    if len(WS_ENTRIES.get_all_values()) == 0:
+        WS_ENTRIES.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice"])
+    # Load beans
+    for row in WS_BEANS.get_all_records():
+        if row.get("user_id") == user_id:
+            bid = row["bean_id"]
+            beans[bid] = {
+                "brand": row.get("brand",""),
+                "name": row.get("name",""),
+                "process": row.get("process",""),
+                "target_ratio": float(row.get("target_ratio", 2.0)),
+                "entries": [],
+            }
+    # Load entries for those beans
+    if beans:
+        for row in WS_ENTRIES.get_all_records():
+            if row.get("user_id") == user_id and row.get("bean_id") in beans:
+                beans[row["bean_id"]]["entries"].append({
+                    "Dato": row.get("date",""),
+                    "Type": row.get("type",""),
+                    "Kværn": row.get("grind",""),
+                    "Dosis (g)": row.get("dose",""),
+                    "Udbytte (g)": row.get("yield",""),
+                    "Tid (sek)": row.get("time",""),
+                    "Target ratio": row.get("target_ratio",""),
+                    "Mål ud (g)": row.get("target_out",""),
+                    "Faktisk ratio": row.get("ratio",""),
+                    "Anbefaling": row.get("advice",""),
+                })
+    return beans
+
+def upsert_bean_to_sheets(user_id, bean_id, bean):
+    vals = ["user_id","bean_id","brand","name","process","target_ratio"]
+    rows = WS_BEANS.get_all_values()
+    if rows:
+        headers = rows[0]
+        # Search for existing
+        for idx, r in enumerate(rows[1:], start=2):
+            if len(r) >= 2 and r[0] == user_id and r[1] == bean_id:
+                WS_BEANS.update(f"A{idx}:F{idx}", [[user_id, bean_id, bean['brand'], bean['name'], bean.get('process',''), bean.get('target_ratio',2.0)]])
+                return
+    WS_BEANS.append_row([user_id, bean_id, bean['brand'], bean['name'], bean.get('process',''), bean.get('target_ratio',2.0)])
+
+def append_entry_to_sheets(user_id, bean_id, entry):
+    WS_ENTRIES.append_row([
+        user_id, bean_id, entry.get("Dato",""), entry.get("Type",""), entry.get("Kværn",""),
+        entry.get("Dosis (g)",""), entry.get("Udbytte (g)",""), entry.get("Tid (sek)",""),
+        entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""),
+    ])
+
 # --------------------------- State -----------------------------------------
 if "beans" not in st.session_state:
-    st.session_state.beans = {}  # bean_id -> {brand,name,process,target_ratio,entries:[...]}
+    st.session_state.beans = {}
 if "current_bean" not in st.session_state:
     st.session_state.current_bean = None
+
+# Load persisted beans for this user (if configured)
+if USE_SHEETS and USER_ID and not st.session_state.beans:
+    st.session_state.beans = load_from_sheets(USER_ID)
 
 beans = st.session_state.beans
 
 # --------------------------- UI: Header ------------------------------------
 st.title("Espresso Advisor – bønne‑mapper & log")
-st.caption("Mobilvenlig: vælg aktiv bønne, log dine shots og få anbefalinger.")
+st.caption("Mobilvenlig: vælg aktiv bønne, log dine shots og få anbefalinger. Data gemmes pr. bruger.")
 
 # --------------------------- UI: Bean selector / creator --------------------
 left, right = st.columns([1,1])
@@ -57,7 +162,6 @@ with left:
         options = ["(Vælg bønne)"] + [f"{b['brand']} – {b['name']}" for b in beans.values()]
         sel = st.selectbox("Aktiv bønne", options, index=0, key="k_sel_bean")
         if sel != "(Vælg bønne)":
-            # find bean_id by matching
             for bid, b in beans.items():
                 if f"{b['brand']} – {b['name']}" == sel:
                     st.session_state.current_bean = bid
@@ -80,6 +184,8 @@ with right:
                 "entries": [],
             }
             st.session_state.current_bean = bid
+            if USE_SHEETS and USER_ID:
+                upsert_bean_to_sheets(USER_ID, bid, beans[bid])
             st.success("Bønne oprettet – klar til log!")
 
 if not st.session_state.current_bean:
@@ -96,10 +202,11 @@ with box:
     c1.markdown(f"**Mærke:** {bean['brand'] or '—'}")
     c2.markdown(f"**Bønne:** {bean['name'] or '—'}")
     c3.metric("Proces", bean.get("process") or "—")
-    # allow per‑bean target ratio tweak
     new_tr = c4.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=[1.8,1.9,2.0,2.1,2.2].index(bean.get("target_ratio",2.0)), key=f"k_tr_{bean_id}")
     if new_tr != bean.get("target_ratio", 2.0):
         bean["target_ratio"] = float(new_tr)
+        if USE_SHEETS and USER_ID:
+            upsert_bean_to_sheets(USER_ID, bean_id, bean)
 
 st.divider()
 
@@ -147,7 +254,9 @@ with cSave:
             "Faktisk ratio": round(ratio,2) if ratio else "",
             "Anbefaling": rec_text,
         }
-        bean["entries"].insert(0, entry)
+        bean.setdefault("entries", []).insert(0, entry)
+        if USE_SHEETS and USER_ID:
+            append_entry_to_sheets(USER_ID, bean_id, entry)
         st.success("Shot gemt i bønne‑mappen!")
 with cReset:
     if st.button("Nulstil felter", use_container_width=True, key=f"k_reset_{bean_id}"):
@@ -160,12 +269,17 @@ st.divider()
 # --------------------------- Log for this bean ------------------------------
 st.subheader("Log for aktiv bønne")
 entries = bean.get("entries", [])
+if not entries and USE_SHEETS and USER_ID:
+    # Reload entries from sheets to reflect latest
+    st.session_state.beans = load_from_sheets(USER_ID)
+    bean = st.session_state.beans[bean_id]
+    entries = bean.get("entries", [])
+
 if not entries:
     st.info("Ingen shots endnu for denne bønne – udfyld felterne og tryk ‘Gem shot’.")
 else:
     df = pd.DataFrame(entries)
     st.dataframe(df, use_container_width=True, hide_index=True)
-    # CSV download (per bean)
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
     st.download_button(
