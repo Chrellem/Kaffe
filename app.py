@@ -35,7 +35,7 @@ PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet
 if "rows" not in st.session_state:
     st.session_state.rows = []
 if "filter_bean" not in st.session_state:
-    st.session_state.filter_bean = "Alle"
+    st.session_state.filter_bean = "Alle" -----------------------------------------------------------------
 if "rows" not in st.session_state:
     st.session_state.rows = []
 
@@ -46,61 +46,61 @@ st.caption("Single/Dobbel • ratio, tid og anbefaling • log og CSV‑export")
 # Bean meta (mobile-friendly: two columns)
 colB1, colB2 = st.columns(2)
 with colB1:
-    brand = st.text_input("Mærke / Risteri", placeholder="fx La Cabra")
+    brand = st.text_input("Mærke / Risteri", placeholder="fx La Cabra", key="k_brand")
 with colB2:
-    bean_name = st.text_input("Bønne / Navn", placeholder="fx Caballero #3")
+    bean_name = st.text_input("Bønne / Navn", placeholder="fx Caballero #3", key="k_bean")
 
 colP1, colP2 = st.columns(2)
 with colP1:
-    process = st.selectbox("Proces", PROCESS_CHOICES, index=0)
+    process = st.selectbox("Proces", PROCESS_CHOICES, index=0, key="k_process")
 with colP2:
-    process_other = st.text_input("Proces (andet)", placeholder="Udfyld hvis valgt 'Andet'" if process=="Andet" else "", disabled=(process!="Andet"))
+    process_other = st.text_input("Proces (andet)", placeholder=("Udfyld hvis valgt 'Andet'" if process=="Andet" else ""), disabled=(process!="Andet"), key="k_process_other"))
 
 # Core inputs
 col1, col2 = st.columns(2)
 with col1:
-    date = st.date_input("Dato")
+    date = st.date_input("Dato", key="k_date")
 with col2:
-    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0)
+    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_type")
 
 c1, c2 = st.columns(2)
 with c1:
-    grind = st.text_input("Kværn (tal)", placeholder="fx 8")
+    grind = st.text_input("Kværn (tal)", placeholder="fx 8", key="k_grind")
 with c2:
-    dose = parse_float(st.text_input("Dosis (g ind)", value="", placeholder=str(rec_dose(shot_type) or "")))
+    dose = parse_float(st.text_input("Dosis (g ind)", key="k_dose", value="", placeholder=str(rec_dose(shot_type) or "")))
 
 c3, c4 = st.columns(2)
 with c3:
-    yield_out = parse_float(st.text_input("Udbytte (g ud)", value="", placeholder="fx 36"))
+    yield_out = parse_float(st.text_input("Udbytte (g ud)", key="k_yield", value="", placeholder="fx 36"))
 with c4:
-    time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", value="", placeholder="fx 27"))
+    time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", key="k_time", value="", placeholder="fx 27"))
 
 c5, c6 = st.columns(2)
 with c5:
-    target_ratio = parse_float(st.selectbox("Target ratio", [1.8, 1.9, 2.0, 2.1, 2.2], index=2))
+    target_ratio = parse_float(st.selectbox("Target ratio", [1.8, 1.9, 2.0, 2.1, 2.2], index=2, key="k_ratio"))
 with c6:
     recommended_dose = rec_dose(shot_type)
     st.metric(label="Anbefalet dosis (auto)", value=f"{recommended_dose:.0f} g")
 
 col1, col2 = st.columns(2)
 with col1:
-    date = st.date_input("Dato")
+    date = st.date_input("Dato", key="k_date")
 with col2:
-    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0)
+    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_type")
 
 c1, c2, c3 = st.columns(3)
 with c1:
-    grind = st.text_input("Kværn (tal)", placeholder="fx 8")
+    grind = st.text_input("Kværn (tal)", placeholder="fx 8", key="k_grind")
 with c2:
-    dose = parse_float(st.text_input("Dosis (g ind)", value="", placeholder=str(rec_dose(shot_type) or "")))
+    dose = parse_float(st.text_input("Dosis (g ind)", key="k_dose", value="", placeholder=str(rec_dose(shot_type) or "")))
 with c3:
-    yield_out = parse_float(st.text_input("Udbytte (g ud)", value="", placeholder="fx 36"))
+    yield_out = parse_float(st.text_input("Udbytte (g ud)", key="k_yield", value="", placeholder="fx 36"))
 
 c4, c5, c6 = st.columns(3)
 with c4:
-    time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", value="", placeholder="fx 27"))
+    time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", key="k_time", value="", placeholder="fx 27"))
 with c5:
-    target_ratio = parse_float(st.selectbox("Target ratio", [1.8, 1.9, 2.0, 2.1, 2.2], index=2))
+    target_ratio = parse_float(st.selectbox("Target ratio", [1.8, 1.9, 2.0, 2.1, 2.2], index=2, key="k_ratio"))
 with c6:
     recommended_dose = rec_dose(shot_type)
     st.metric(label="Anbefalet dosis (auto)", value=f"{recommended_dose:.0f} g")
@@ -183,7 +183,7 @@ for r in st.session_state.rows:
     key = f"{r.get('Mærke','')} – {r.get('Bønne','')}".strip(" –")
     if key not in beans:
         beans.append(key)
-sel = st.selectbox("Filtrér på bønne", beans, index=0)
+sel = st.selectbox("Filtrér på bønne", beans, index=0, key="k_filter")
 
 if len(st.session_state.rows) == 0:
     st.info("Ingen poster endnu – udfyld felterne og klik ‘Gem i log’.")
