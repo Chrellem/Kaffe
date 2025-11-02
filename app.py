@@ -149,11 +149,12 @@ if "user_id" not in st.session_state or not st.session_state.user_id:
         if st.button("Log ind", type="primary"):
             uid = (user_input or "").strip()
             if uid:
-                st.session_state.user_id = uid
-                # load fra Sheets hvis aktivt
-                if USE_SHEETS:
-                    st.session_state.beans = load_from_sheets(uid)
-                st.experimental_rerun()
+    st.session_state.user_id = uid
+    # load fra Sheets hvis aktivt
+    if USE_SHEETS:
+        st.session_state.beans = load_from_sheets(uid)
+    st.session_state.just_logged_in = True
+    st.stop()
             else:
                 st.warning("Indtast et Bruger‑ID for at fortsætte.")
     st.stop()
