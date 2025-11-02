@@ -155,8 +155,8 @@ if "user_id" not in st.session_state or not st.session_state.user_id:
         st.session_state.beans = load_from_sheets(uid)
     st.session_state.just_logged_in = True
     st.stop()
-            else:
-                st.warning("Indtast et Bruger‑ID for at fortsætte.")
+else:
+    st.warning("Indtast et Bruger-ID for at fortsætte.")
     st.stop()
 
 # efter login
