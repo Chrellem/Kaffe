@@ -54,19 +54,14 @@ colP1, colP2 = st.columns(2)
 with colP1:
     process = st.selectbox("Proces", PROCESS_CHOICES, index=0, key="k_process")
 with colP2:
-   process_other = st.text_input(
-    "Proces (andet)",
-    placeholder=("Udfyld hvis valgt 'Andet'" if process=="Andet" else ""),
-    disabled=(process!="Andet"),
-    key="k_process_other"
-)
+    process_other = st.text_input("Proces (andet)", placeholder=("Udfyld hvis valgt 'Andet'" if process=="Andet" else ""), disabled=(process!="Andet"), key="k_process_other"))
 
 # Core inputs
 col1, col2 = st.columns(2)
 with col1:
-    date = st.date_input("Dato", key="k_date")
+    date = st.date_input("Dato", key="k_input_date")
 with col2:
-    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_type")
+    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_input_type")
 
 c1, c2 = st.columns(2)
 with c1:
@@ -89,9 +84,9 @@ with c6:
 
 col1, col2 = st.columns(2)
 with col1:
-    date = st.date_input("Dato", key="k_date")
+    date = st.date_input("Dato", key="k_input_date")
 with col2:
-    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_type")
+    shot_type = st.selectbox("Shot type", ["Double", "Single"], index=0, key="k_input_type")
 
 c1, c2, c3 = st.columns(3)
 with c1:
