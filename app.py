@@ -11,7 +11,7 @@ st.set_page_config(page_title="Espresso Advisor", page_icon="☕", layout="wide"
 # --------------------------- Optional persistence backends -----------------
 USE_SHEETS = False
 try:
-    if "gcp_service_account" in st.secrets and "gsheet_name" in st.secrets:
+    if "gcp_service_account" in st.secrets and ("gsheet_id" in st.secrets or "gsheet_name" in st.secrets):
         USE_SHEETS = True
 except Exception:
     USE_SHEETS = False
@@ -20,24 +20,31 @@ if USE_SHEETS:
     import gspread
     from google.oauth2.service_account import Credentials
 
-    # Kun Sheets‑scope er nødvendigt, når vi åbner med sheet‑ID
+    # Kun Sheets‑scope er nødvendigt når vi åbner via ID
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
     CREDS = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=SCOPES
     )
     GC = gspread.authorize(CREDS)
 
-    # Åbn arket via ID (mest stabilt). Fald tilbage til navn hvis ID ikke findes i secrets
+    # Åbn arket via ID (stabilt). Fald tilbage til navn hvis ID ikke sat.
     if "gsheet_id" in st.secrets and st.secrets["gsheet_id"]:
         SH = GC.open_by_key(st.secrets["gsheet_id"])
     else:
-        SH = GC.open(st.secrets["gsheet_name"])  # kræver Drive‑søgning
+        SH = GC.open(st.secrets["gsheet_name"])  # kræver Drive‑søgning i baggrunden
 
-    def ws(name):
+    def ws(name: str):
+        """Hent eller opret worksheet + sørg for headers første gang."""
         try:
-            return SH.worksheet(name)
+            w = SH.worksheet(name)
         except Exception:
-            return SH.add_worksheet(title=name, rows=1000, cols=20)
+            w = SH.add_worksheet(title=name, rows=1000, cols=20)
+        # Opret headers hvis tomt
+        if name == "beans" and len(w.get_all_values()) == 0:
+            w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
+        if name == "entries" and len(w.get_all_values()) == 0:
+            w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice"])
+        return w
 
     WS_BEANS = ws("beans")
     WS_ENTRIES = ws("entries")
@@ -73,82 +80,56 @@ def recommend(ratio, time_sec, target_out):
 
 PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"]
 
-# --------------------------- User id ---------------------------------------
-def get_user_id():
-    # Try Streamlit Cloud user
-    uid = None
-    try:
-        u = st.experimental_user
-        if u and getattr(u, "email", None):
-            uid = u.email
-    except Exception:
-        uid = None
-    # Fallback to input
-    if not uid:
-        uid = st.sidebar.text_input("Bruger-ID (mail ell. valgfrit)", value=st.session_state.get("user_id", ""), key="k_user")
-    if uid:
-        st.session_state.user_id = uid
-    return uid
+# --------------------------- Sheets I/O ------------------------------------
+if USE_SHEETS:
+    def load_from_sheets(user_id: str):
+        beans: dict[str, dict] = {}
+        # indlæs bønner
+        for row in WS_BEANS.get_all_records():
+            if row.get("user_id") == user_id:
+                bid = row["bean_id"]
+                beans[bid] = {
+                    "brand": row.get("brand",""),
+                    "name": row.get("name",""),
+                    "process": row.get("process",""),
+                    "target_ratio": float(row.get("target_ratio", 2.0)),
+                    "entries": [],
+                }
+        # indlæs entries
+        if beans:
+            for row in WS_ENTRIES.get_all_records():
+                if row.get("user_id") == user_id and row.get("bean_id") in beans:
+                    beans[row["bean_id"]]["entries"].append({
+                        "Dato": row.get("date",""),
+                        "Type": row.get("type",""),
+                        "Kværn": row.get("grind",""),
+                        "Dosis (g)": row.get("dose",""),
+                        "Udbytte (g)": row.get("yield",""),
+                        "Tid (sek)": row.get("time",""),
+                        "Target ratio": row.get("target_ratio",""),
+                        "Mål ud (g)": row.get("target_out",""),
+                        "Faktisk ratio": row.get("ratio",""),
+                        "Anbefaling": row.get("advice",""),
+                    })
+        return beans
 
-USER_ID = get_user_id()
-if USE_SHEETS and not USER_ID:
-    st.warning("Angiv et Bruger-ID i sidemenuen for at gemme på tværs af sessioner.")
+    def upsert_bean_to_sheets(user_id: str, bean_id: str, bean: dict):
+        rows = WS_BEANS.get_all_values()
+        # opdater hvis findes
+        if rows:
+            for idx, r in enumerate(rows[1:], start=2):
+                if len(r) >= 2 and r[0] == user_id and r[1] == bean_id:
+                    WS_BEANS.update(f"A{idx}:F{idx}", [[user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)]])
+                    return
+        # ellers append
+        WS_BEANS.append_row([user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)])
 
-# --------------------------- Load/save (Sheets) -----------------------------
-def load_from_sheets(user_id):
-    beans = {}
-    # Ensure headers
-    if len(WS_BEANS.get_all_values()) == 0:
-        WS_BEANS.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
-    if len(WS_ENTRIES.get_all_values()) == 0:
-        WS_ENTRIES.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice"])
-    # Load beans
-    for row in WS_BEANS.get_all_records():
-        if row.get("user_id") == user_id:
-            bid = row["bean_id"]
-            beans[bid] = {
-                "brand": row.get("brand",""),
-                "name": row.get("name",""),
-                "process": row.get("process",""),
-                "target_ratio": float(row.get("target_ratio", 2.0)),
-                "entries": [],
-            }
-    # Load entries for those beans
-    if beans:
-        for row in WS_ENTRIES.get_all_records():
-            if row.get("user_id") == user_id and row.get("bean_id") in beans:
-                beans[row["bean_id"]]["entries"].append({
-                    "Dato": row.get("date",""),
-                    "Type": row.get("type",""),
-                    "Kværn": row.get("grind",""),
-                    "Dosis (g)": row.get("dose",""),
-                    "Udbytte (g)": row.get("yield",""),
-                    "Tid (sek)": row.get("time",""),
-                    "Target ratio": row.get("target_ratio",""),
-                    "Mål ud (g)": row.get("target_out",""),
-                    "Faktisk ratio": row.get("ratio",""),
-                    "Anbefaling": row.get("advice",""),
-                })
-    return beans
-
-def upsert_bean_to_sheets(user_id, bean_id, bean):
-    vals = ["user_id","bean_id","brand","name","process","target_ratio"]
-    rows = WS_BEANS.get_all_values()
-    if rows:
-        headers = rows[0]
-        # Search for existing
-        for idx, r in enumerate(rows[1:], start=2):
-            if len(r) >= 2 and r[0] == user_id and r[1] == bean_id:
-                WS_BEANS.update(f"A{idx}:F{idx}", [[user_id, bean_id, bean['brand'], bean['name'], bean.get('process',''), bean.get('target_ratio',2.0)]])
-                return
-    WS_BEANS.append_row([user_id, bean_id, bean['brand'], bean['name'], bean.get('process',''), bean.get('target_ratio',2.0)])
-
-def append_entry_to_sheets(user_id, bean_id, entry):
-    WS_ENTRIES.append_row([
-        user_id, bean_id, entry.get("Dato",""), entry.get("Type",""), entry.get("Kværn",""),
-        entry.get("Dosis (g)",""), entry.get("Udbytte (g)",""), entry.get("Tid (sek)",""),
-        entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""),
-    ])
+    def append_entry_to_sheets(user_id: str, bean_id: str, entry: dict):
+        WS_ENTRIES.append_row([
+            user_id, bean_id, entry.get("Dato",""), entry.get("Type",""), entry.get("Kværn",""),
+            entry.get("Dosis (g)",""), entry.get("Udbytte (g)",""), entry.get("Tid (sek)",""),
+            entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""),
+        ])
 
 # --------------------------- State -----------------------------------------
 if "beans" not in st.session_state:
@@ -156,17 +137,51 @@ if "beans" not in st.session_state:
 if "current_bean" not in st.session_state:
     st.session_state.current_bean = None
 
-# Load persisted beans for this user (if configured)
+# --------------------------- Login (manuel) --------------------------------
+st.title("Espresso Advisor – bønne‑mapper & log")
+
+if "user_id" not in st.session_state or not st.session_state.user_id:
+    st.markdown("### Log ind")
+    st.caption("Skriv et brugernavn (fx din email eller et valgfrit alias). Alle dine bønner og logs gemmes under dette ID.")
+    user_input = st.text_input("Bruger‑ID", placeholder="fx kaffe@nørd.dk eller 'jonas_home'", key="k_login_user")
+    colL, colR = st.columns([1,1])
+    with colL:
+        if st.button("Log ind", type="primary"):
+            uid = (user_input or "").strip()
+            if uid:
+                st.session_state.user_id = uid
+                # load fra Sheets hvis aktivt
+                if USE_SHEETS:
+                    st.session_state.beans = load_from_sheets(uid)
+                st.experimental_rerun()
+            else:
+                st.warning("Indtast et Bruger‑ID for at fortsætte.")
+    st.stop()
+
+# efter login
+USER_ID = st.session_state.user_id
+
+# topbar med bruger + log ud
+top_l, top_r = st.columns([3,1])
+with top_l:
+    st.caption(f"Logget ind som **{USER_ID}** · dine data synces til Google Sheets")
+with top_r:
+    if st.button("Log ud"):
+        for k in list(st.session_state.keys()):
+            if k not in ("beans",):
+                del st.session_state[k]
+        st.session_state.beans = {}
+        st.experimental_rerun()
+
+# indlæs ved login hvis tom lokal state
 if USE_SHEETS and USER_ID and not st.session_state.beans:
     st.session_state.beans = load_from_sheets(USER_ID)
 
 beans = st.session_state.beans
 
-# --------------------------- UI: Header ------------------------------------
-st.title("Espresso Advisor – bønne‑mapper & log")
 st.caption("Mobilvenlig: vælg aktiv bønne, log dine shots og få anbefalinger. Data gemmes pr. bruger.")
 
-# --------------------------- UI: Bean selector / creator --------------------
+# --------------------------- Bean selector / creator ------------------------
 left, right = st.columns([1,1])
 with left:
     if beans:
@@ -195,7 +210,7 @@ with right:
                 "entries": [],
             }
             st.session_state.current_bean = bid
-            if USE_SHEETS and USER_ID:
+            if USE_SHEETS:
                 upsert_bean_to_sheets(USER_ID, bid, beans[bid])
             st.success("Bønne oprettet – klar til log!")
 
@@ -216,7 +231,7 @@ with box:
     new_tr = c4.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=[1.8,1.9,2.0,2.1,2.2].index(bean.get("target_ratio",2.0)), key=f"k_tr_{bean_id}")
     if new_tr != bean.get("target_ratio", 2.0):
         bean["target_ratio"] = float(new_tr)
-        if USE_SHEETS and USER_ID:
+        if USE_SHEETS:
             upsert_bean_to_sheets(USER_ID, bean_id, bean)
 
 st.divider()
@@ -266,7 +281,9 @@ with cSave:
             "Anbefaling": rec_text,
         }
         bean.setdefault("entries", []).insert(0, entry)
-        if USE_SHEETS and USER_ID:
+        if USE_SHEETS:
+            # Sørg for at bønnen findes i beans‑arket først
+            upsert_bean_to_sheets(USER_ID, bean_id, bean)
             append_entry_to_sheets(USER_ID, bean_id, entry)
         st.success("Shot gemt i bønne‑mappen!")
 with cReset:
@@ -280,10 +297,10 @@ st.divider()
 # --------------------------- Log for this bean ------------------------------
 st.subheader("Log for aktiv bønne")
 entries = bean.get("entries", [])
-if not entries and USE_SHEETS and USER_ID:
-    # Reload entries from sheets to reflect latest
+if USE_SHEETS and USER_ID and not entries:
+    # Reload fra Sheets (fx efter ny deploy)
     st.session_state.beans = load_from_sheets(USER_ID)
-    bean = st.session_state.beans[bean_id]
+    bean = st.session_state.beans.get(bean_id, bean)
     entries = bean.get("entries", [])
 
 if not entries:
