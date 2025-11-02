@@ -54,7 +54,13 @@ colP1, colP2 = st.columns(2)
 with colP1:
     process = st.selectbox("Proces", PROCESS_CHOICES, index=0, key="k_process")
 with colP2:
-    process_other = st.text_input("Proces (andet)", placeholder=("Udfyld hvis valgt 'Andet'" if process=="Andet" else ""), disabled=(process!="Andet"), key="k_process_other"))
+    process_other = st.text_input(
+    "Proces (andet)",
+    placeholder=("Udfyld hvis valgt 'Andet'" if process=="Andet" else ""),
+    disabled=(process!="Andet"),
+    key="k_process_other"
+)
+
 
 # Core inputs
 col1, col2 = st.columns(2)
