@@ -35,7 +35,7 @@ PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet
 if "rows" not in st.session_state:
     st.session_state.rows = []
 if "filter_bean" not in st.session_state:
-    st.session_state.filter_bean = "Alle" -----------------------------------------------------------------
+    st.session_state.filter_bean = "Alle"
 if "rows" not in st.session_state:
     st.session_state.rows = []
 
