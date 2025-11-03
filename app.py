@@ -265,18 +265,17 @@ colB.markdown(f"**Bønne:** {bean['name'] or '—'}")
 colC.metric("Proces", bean.get("process") or "—")
 
 # --------------------------- Shot form -------------------------------------
-form1 = st.container()
-with form1:
+with st.form("shot_form"):
     c1, c2 = st.columns(2)
     with c1:
-        shot_type = st.selectbox("Shot type", ["Double","Single"], index=0)
-        grind = st.text_input("Kværn (tal)", placeholder="fx 8")
-        dose = parse_float(st.text_input("Dosis (g ind)", placeholder=str(rec_dose(shot_type) or "")))
+        shot_type = st.selectbox("Shot type", ["Double","Single"], index=0, key=f"type_{bean_id}")
+        grind = st.text_input("Kværn (tal)", placeholder="fx 8", key=f"grind_{bean_id}")
+        dose = parse_float(st.text_input("Dosis (g ind)", placeholder=str(rec_dose(shot_type) or ""), key=f"dose_{bean_id}"))
     with c2:
-        yield_out = parse_float(st.text_input("Udbytte (g ud)", placeholder="fx 36"))
-        time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", placeholder="fx 27"))
-        date_str = st.date_input("Dato")
-    note = st.text_input("Noter (valgfri)", placeholder="Smagsnoter, mælketekstur, vand…")
+        yield_out = parse_float(st.text_input("Udbytte (g ud)", placeholder="fx 36", key=f"yield_{bean_id}"))
+        time_sec = parse_float(st.text_input("Tid (sek, fra første dråbe)", placeholder="fx 27", key=f"time_{bean_id}"))
+        date_str = st.date_input("Dato", key=f"date_{bean_id}")
+    note = st.text_input("Noter (valgfri)", placeholder="Smagsnoter, mælketekstur, vand…", key=f"note_{bean_id}")
 
     target_ratio = bean.get("target_ratio", 2.0)
     target_out = (dose * target_ratio) if dose is not None else (rec_dose(shot_type) or 0) * target_ratio
@@ -293,35 +292,34 @@ with form1:
         unsafe_allow_html=True,
     )
 
-    colS, colR = st.columns(2)
-    with colS:
-        if st.button("Gem shot i aktiv bønne", use_container_width=True):
-            entry = {
-                "Dato": str(date_str),
-                "Type": shot_type,
-                "Kværn": grind,
-                "Dosis (g)": dose if dose is not None else "",
-                "Udbytte (g)": yield_out if yield_out is not None else "",
-                "Tid (sek)": time_sec if time_sec is not None else "",
-                "Target ratio": target_ratio,
-                "Mål ud (g)": int(round(target_out)) if target_out else "",
-                "Faktisk ratio": round(ratio,2) if ratio else "",
-                "Anbefaling": advice,
-                "Noter": note or "",
-            }
-            bean.setdefault("entries", []).insert(0, entry)
-            if USE_SHEETS:
-                upsert_bean(USER_ID, bean_id, bean)
-                append_entry(USER_ID, bean_id, entry)
-                try:
-                    load_user_data.clear()
-                except Exception:
-                    pass
-            st.success("✅ Shot gemt!")
-            st.rerun()
-    with colR:
-        if st.button("Nulstil felter", use_container_width=True):
-            st.rerun()
+    submitted = st.form_submit_button("Gem shot i aktiv bønne", use_container_width=True)
+
+    if submitted:
+        entry = {
+            "Dato": str(date_str),
+            "Type": shot_type,
+            "Kværn": grind,
+            "Dosis (g)": dose if dose is not None else "",
+            "Udbytte (g)": yield_out if yield_out is not None else "",
+            "Tid (sek)": time_sec if time_sec is not None else "",
+            "Target ratio": target_ratio,
+            "Mål ud (g)": int(round(target_out)) if target_out else "",
+            "Faktisk ratio": round(ratio,2) if ratio else "",
+            "Anbefaling": advice,
+            "Noter": note or "",
+        }
+        bean.setdefault("entries", []).insert(0, entry)
+        if USE_SHEETS:
+            upsert_bean(USER_ID, bean_id, bean)
+            append_entry(USER_ID, bean_id, entry)
+            try:
+                load_user_data.clear()
+            except Exception:
+                pass
+        st.success("✅ Shot gemt!")
+        st.session_state.user_id = USER_ID
+        st.session_state.current_bean = bean_id
+        st.rerun()
 
 # --------------------------- Historik --------------------------------------
 st.subheader("Historik for valgt bønne")
