@@ -199,12 +199,10 @@ with right:
                 "entries": [],
             }
             st.session_state.current_bean = bid
-            if USE_SHEETS:
-                upsert_bean(USER_ID, bid, beans[bid])
-            st.success("Bønne oprettet! Klar til at logge shots.")
-            st.success("Bønne oprettet! Klar til at logge shots.")
-            st.session_state.user_id = USER_ID
-            st.session_state.current_bean = bid
+# Sørg for at bønnen findes lokalt i state, før vi evt. henter igen
+            if "beans" not in st.session_state:
+            st.session_state.beans = {}
+            st.session_state.beans[bid] = beans[bid]
             st.stop()
 
 
