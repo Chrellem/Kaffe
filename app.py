@@ -25,45 +25,29 @@ except Exception:
     USE_SHEETS = False
 
 if USE_SHEETS:
-# ---- Google Sheets: stabil åbning + caching + retry ----
-import gspread
-from google.oauth2.service_account import Credentials
+    import gspread
+    from google.oauth2.service_account import Credentials
 
-@st.cache_resource(show_spinner=False)
-def get_sheet():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    gc = gspread.authorize(creds)
+    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+    CREDS = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    GC = gspread.authorize(CREDS)
 
-    sheet_id = (st.secrets.get("gsheet_id") or "").strip()
-    if not sheet_id:
-        st.error("Mangler 'gsheet_id' i Secrets (kopiér ID mellem /d/ og /edit i URL'en).")
-        st.stop()
-
-    # simple retry på 429
-    last_err = None
-    for i in range(3):
-        try:
-            sh = gc.open_by_key(sheet_id)
-            return gc, sh
-        except gspread.exceptions.APIError as e:
-            code = getattr(getattr(e, "response", None), "status_code", None)
-            last_err = (e, code)
-            if code == 429 and i < 2:
-                time.sleep(1 + i)  # backoff
-                continue
-            break
-
-    e, code = last_err
-    svc = st.secrets["gcp_service_account"].get("client_email", "(service-konto)")
-    st.error(f"Kunne ikke åbne arket via ID (HTTP {code or 'ukendt'}). "
-             f"Tjek at ID'et er korrekt, og at arket er delt som Editor med {svc}.")
+    # Åbn arket via ID hvis muligt, ellers via navn
+    # Åbn arket KUN via ID (stabilt)
+SHEET_ID = (st.secrets.get("gsheet_id") or "").strip()
+if not SHEET_ID:
+    st.error("Mangler 'gsheet_id' i Secrets. Kopiér ID-delen fra Sheets-URL'en (mellem /d/ og /edit).")
     st.stop()
 
-GC, SH = get_sheet()
+try:
+    SH = GC.open_by_key(SHEET_ID)
+except gspread.exceptions.APIError as e:
+    code = getattr(getattr(e, "response", None), "status_code", None)
+    svc = st.secrets["gcp_service_account"].get("client_email", "(service-konto)")
+    st.error(f"Kunne ikke åbne arket via ID (HTTP {code or 'ukendt'}). Tjek at ID'et er korrekt, og at arket er delt som Editor med {svc}.")
+    st.stop()
 
+# Helper: hent/initialiser worksheet + headers
 def ws(name: str):
     try:
         w = SH.worksheet(name)
@@ -72,13 +56,11 @@ def ws(name: str):
     if name == "beans" and len(w.get_all_values()) == 0:
         w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
     if name == "entries" and len(w.get_all_values()) == 0:
-        w.append_row(["user_id","bean_id","date","type","grind","dose","yield",
-                      "time","target_ratio","target_out","ratio","advice","notes"])
+        w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice","notes"])
     return w
 
 WS_BEANS = ws("beans")
 WS_ENTRIES = ws("entries")
-
 
 # --------------------------- Helpers ---------------------------------------
 PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"]
