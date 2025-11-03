@@ -308,14 +308,20 @@ with st.form("shot_form"):
             "Anbefaling": advice,
             "Noter": note or "",
         }
-        bean.setdefault("entries", []).insert(0, entry)
+        # Sørg for at bønnen findes lokalt og opdater entries i state
+        st.session_state.beans.setdefault(bean_id, bean)
+        st.session_state.beans[bean_id].setdefault("entries", []).insert(0, entry)
+
         if USE_SHEETS:
-            upsert_bean(USER_ID, bean_id, bean)
+            upsert_bean(USER_ID, bean_id, st.session_state.beans[bean_id])
             append_entry(USER_ID, bean_id, entry)
             try:
                 load_user_data.clear()
             except Exception:
                 pass
+            # Indlæs fra Sheets for at sikre at bønnen eksisterer for næste run
+            st.session_state.beans = load_user_data(USER_ID)
+
         st.success("✅ Shot gemt!")
         st.session_state.user_id = USER_ID
         st.session_state.current_bean = bean_id
