@@ -44,10 +44,14 @@ if USE_SHEETS:
             w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
         if name == "entries" and len(w.get_all_values()) == 0:
             w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice"])
+        if name == "users" and len(w.get_all_values()) == 0:
+            w.append_row(["user_id","last_active_bean_id"])  # enkel brugerprofil
         return w
 
     WS_BEANS = ws("beans")
     WS_ENTRIES = ws("entries")
+    WS_USERS = ws("users")
+    
 
 # --------------------------- Helpers ---------------------------------------
 def slugify(s: str) -> str:
@@ -115,13 +119,11 @@ if USE_SHEETS:
 
     def upsert_bean_to_sheets(user_id: str, bean_id: str, bean: dict):
         rows = WS_BEANS.get_all_values()
-        # opdater hvis findes
         if rows:
             for idx, r in enumerate(rows[1:], start=2):
                 if len(r) >= 2 and r[0] == user_id and r[1] == bean_id:
                     WS_BEANS.update(f"A{idx}:F{idx}", [[user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)]])
                     return
-        # ellers append
         WS_BEANS.append_row([user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)])
 
     def append_entry_to_sheets(user_id: str, bean_id: str, entry: dict):
@@ -131,7 +133,25 @@ if USE_SHEETS:
             entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""),
         ])
 
-# --------------------------- State -----------------------------------------
+    def get_user_profile(user_id: str):
+        rows = WS_USERS.get_all_records()
+        for r in rows:
+            if r.get("user_id") == user_id:
+                return r
+        return None
+
+    def upsert_user_profile(user_id: str, last_active_bean_id: str | None = None):
+        rows = WS_USERS.get_all_values()
+        if rows:
+            for idx, r in enumerate(rows[1:], start=2):
+                if len(r) >= 1 and r[0] == user_id:
+                    if last_active_bean_id is None:
+                        last_active_bean_id = rows[idx-1][1] if len(rows[idx-1])>1 else ""
+                    WS_USERS.update(f"A{idx}:B{idx}", [[user_id, last_active_bean_id or ""]])
+                    return
+        WS_USERS.append_row([user_id, last_active_bean_id or ""]) 
+
+# --------------------------- State ----------------------------------------- -----------------------------------------
 if "beans" not in st.session_state:
     st.session_state.beans = {}
 if "current_bean" not in st.session_state:
@@ -140,28 +160,44 @@ if "current_bean" not in st.session_state:
 # --------------------------- Login (manuel) --------------------------------
 st.title("Espresso Advisor – bønne‑mapper & log")
 
+# Prøv at auto-logge ind via URL-parameter ?user=<id>
+try:
+    qp = st.query_params  # ny API
+    user_from_url = qp.get("user", None)
+except Exception:
+    user_from_url = None
+    try:
+        user_from_url = st.experimental_get_query_params().get("user", [None])[0]
+    except Exception:
+        pass
+
+if ("user_id" not in st.session_state or not st.session_state.user_id) and user_from_url:
+    st.session_state.user_id = user_from_url
+    if USE_SHEETS:
+        st.session_state.beans = load_from_sheets(user_from_url)
+
 if "user_id" not in st.session_state or not st.session_state.user_id:
     st.markdown("### Log ind")
-    st.caption("Skriv et brugernavn (fx din email eller et valgfrit alias). Alle dine bønner og logs gemmes under dette ID.")
-    
-    # felt til bruger-id
-    user_input = st.text_input("Bruger-ID", placeholder="fx kaffe_nørd eller jonas_home", key="k_login_user")
-    
+    st.caption("Skriv et brugernavn (alias). Alle dine bønner og logs gemmes under dette ID.")
+    user_input = st.text_input("Bruger-ID", placeholder="fx kaffe_nord eller jonas_home", key="k_login_user")
     colL, colR = st.columns([1,1])
     with colL:
         if st.button("Log ind", type="primary"):
             uid = (user_input or "").strip()
             if uid:
                 st.session_state.user_id = uid
-                # load fra Sheets hvis aktivt
                 if USE_SHEETS:
                     st.session_state.beans = load_from_sheets(uid)
-                st.session_state.just_logged_in = True
+                    upsert_user_profile(uid)  # sørg for at bruger findes i users-arket
+                # skriv bruger-id i URL så du kan åbne direkte næste gang
+                try:
+                    st.query_params["user"] = uid
+                except Exception:
+                    st.experimental_set_query_params(user=uid)
                 st.stop()
             else:
                 st.warning("Indtast et Bruger-ID for at fortsætte.")
     st.stop()
-
 
 # efter login
 USER_ID = st.session_state.user_id
@@ -196,7 +232,14 @@ with left:
             for bid, b in beans.items():
                 if f"{b['brand']} – {b['name']}" == sel:
                     st.session_state.current_bean = bid
+                    if USE_SHEETS:
+                        upsert_user_profile(USER_ID, last_active_bean_id=bid)
                     break
+        # hvis ingen valgt men vi har en seneste aktiv i users-arket
+        elif USE_SHEETS:
+            prof = get_user_profile(USER_ID)
+            if prof and prof.get("last_active_bean_id") in beans:
+                st.session_state.current_bean = prof["last_active_bean_id"]
 with right:
     with st.expander("➕ Ny bønne", expanded=(not beans)):
         n_brand = st.text_input("Mærke / Risteri", key="k_new_brand")
@@ -217,6 +260,7 @@ with right:
             st.session_state.current_bean = bid
             if USE_SHEETS:
                 upsert_bean_to_sheets(USER_ID, bid, beans[bid])
+                upsert_user_profile(USER_ID, last_active_bean_id=bid)
             st.success("Bønne oprettet – klar til log!")
 
 if not st.session_state.current_bean:
