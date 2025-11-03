@@ -202,7 +202,11 @@ with right:
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
             st.success("Bønne oprettet! Klar til at logge shots.")
-            st.experimental_rerun()
+            st.success("Bønne oprettet! Klar til at logge shots.")
+            st.session_state.user_id = USER_ID
+            st.session_state.current_bean = bid
+            st.stop()
+
 
 if not st.session_state.current_bean:
     st.info("Vælg en eksisterende bønne eller opret en ny.")
