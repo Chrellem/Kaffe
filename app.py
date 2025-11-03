@@ -170,24 +170,19 @@ with left:
         labels = [f"{b['brand']} – {b['name']}" for b in beans.values()]
         options = ["(Vælg bønne)"] + labels
 
-        # find label for current_bean (hvis sat)
+        # Forvælg aktuelt valg hvis muligt
         cur_label = "(Vælg bønne)"
         if st.session_state.current_bean in beans:
-            b = beans[st.session_state.current_bean]
-            cur_label = f"{b['brand']} – {b['name']}"
-
+            bcur = beans[st.session_state.current_bean]
+            cur_label = f"{bcur['brand']} – {bcur['name']}"
         idx = options.index(cur_label) if cur_label in options else 0
-        sel = st.selectbox("Aktiv bønne", options, index=idx, key="k_sel_bean")
 
+        sel = st.selectbox("Aktiv bønne", options, index=idx)
         if sel != "(Vælg bønne)":
-            # map label -> bean_id og sæt current_bean
             for bid, b in beans.items():
                 if f"{b['brand']} – {b['name']}" == sel:
                     st.session_state.current_bean = bid
-                    st.success("Bønne oprettet! Klar til at logge shots.")
-                    st.experimental_rerun()
                     break
-
 with right:
     with st.expander("➕ Ny bønne", expanded=(not beans)):
         n_brand = st.text_input("Mærke / Risteri")
@@ -206,8 +201,8 @@ with right:
             st.session_state.current_bean = bid
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
-            st.success("Bønne oprettet!")
-            st.stop()
+            st.success("Bønne oprettet! Klar til at logge shots.")
+            st.experimental_rerun()
 
 if not st.session_state.current_bean:
     st.info("Vælg en eksisterende bønne eller opret en ny.")
