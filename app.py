@@ -263,12 +263,32 @@ with right:
                 upsert_user_profile(USER_ID, last_active_bean_id=bid)
             st.success("Bønne oprettet – klar til log!")
 
-if not st.session_state.current_bean:
-    st.info("Vælg en eksisterende bønne i listen eller opret en ny i panelet ‘➕ Ny bønne’.")
-    st.stop()
+# Sikring: vælg en aktiv bønne hvis den mangler eller ikke længere findes
+if (not st.session_state.current_bean) or (st.session_state.current_bean not in beans):
+    fallback_id = None
+    # 1) prøv users-arket for last_active_bean_id
+    if USE_SHEETS:
+        prof = get_user_profile(USER_ID)
+        if prof and prof.get("last_active_bean_id") in beans:
+            fallback_id = prof.get("last_active_bean_id")
+    # 2) hvis ingen profil eller ugyldigt id: tag første bønne hvis der findes nogen
+    if not fallback_id and beans:
+        fallback_id = next(iter(beans.keys()))
+    # 3) hvis vi fandt en kandidat, sæt den; ellers bed brugeren oprette/vælge
+    if fallback_id:
+        st.session_state.current_bean = fallback_id
+        if USE_SHEETS:
+            upsert_user_profile(USER_ID, last_active_bean_id=fallback_id)
+    else:
+        st.info("Vælg en eksisterende bønne i listen eller opret en ny i panelet ‘➕ Ny bønne’.")
+        st.stop()
 
-bean = beans[st.session_state.current_bean]
 bean_id = st.session_state.current_bean
+bean = beans.get(bean_id)
+if bean is None:
+    st.warning("Den senest valgte bønne findes ikke længere. Vælg en anden eller opret en ny.")
+    st.session_state.current_bean = None
+    st.stop()
 
 # --------------------------- Active bean header ----------------------------
 box = st.container()
