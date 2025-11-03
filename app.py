@@ -355,11 +355,19 @@ with cSave:
             upsert_bean_to_sheets(USER_ID, bean_id, bean)
             append_entry_to_sheets(USER_ID, bean_id, entry)
         st.success("Shot gemt i bønne‑mappen!")
-with cReset:
-    if st.button("Nulstil felter", use_container_width=True, key=f"k_reset_{bean_id}"):
-        for k in [f"k_type_{bean_id}", f"k_grind_{bean_id}", f"k_dose_{bean_id}", f"k_yield_{bean_id}", f"k_time_{bean_id}"]:
-            if k in st.session_state: del st.session_state[k]
-        st.experimental_rerun()
+        st.success("✅ Shot gemt i bønne-mappen!")
+
+        # Gem aktiv bønne og bruger i state, så vi ikke mister kontekst
+        st.session_state.user_id = USER_ID
+        st.session_state.current_bean = bean_id
+
+        # Opdater brugers profil i ark
+        if USE_SHEETS:
+            upsert_user_profile(USER_ID, last_active_bean_id=bean_id)
+
+        # Stop roligt uden reload
+        st.stop()
+
 
 st.divider()
 
