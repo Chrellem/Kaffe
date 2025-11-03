@@ -26,7 +26,6 @@ except Exception:
 
 if USE_SHEETS:
 # ---- Google Sheets: stabil åbning + caching + retry ----
-import time
 import gspread
 from google.oauth2.service_account import Credentials
 
