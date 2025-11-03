@@ -167,13 +167,27 @@ beans = st.session_state.beans
 left, right = st.columns([1,1])
 with left:
     if beans:
-        options = ["(Vælg bønne)"] + [f"{b['brand']} – {b['name']}" for b in beans.values()]
-        sel = st.selectbox("Aktiv bønne", options, index=0)
+        labels = [f"{b['brand']} – {b['name']}" for b in beans.values()]
+        options = ["(Vælg bønne)"] + labels
+
+        # find label for current_bean (hvis sat)
+        cur_label = "(Vælg bønne)"
+        if st.session_state.current_bean in beans:
+            b = beans[st.session_state.current_bean]
+            cur_label = f"{b['brand']} – {b['name']}"
+
+        idx = options.index(cur_label) if cur_label in options else 0
+        sel = st.selectbox("Aktiv bønne", options, index=idx, key="k_sel_bean")
+
         if sel != "(Vælg bønne)":
+            # map label -> bean_id og sæt current_bean
             for bid, b in beans.items():
                 if f"{b['brand']} – {b['name']}" == sel:
                     st.session_state.current_bean = bid
+                    st.success("Bønne oprettet! Klar til at logge shots.")
+                    st.experimental_rerun()
                     break
+
 with right:
     with st.expander("➕ Ny bønne", expanded=(not beans)):
         n_brand = st.text_input("Mærke / Risteri")
