@@ -185,11 +185,11 @@ with left:
                     break
 with right:
     with st.expander("➕ Ny bønne", expanded=(not beans)):
-        n_brand = st.text_input("Mærke / Risteri")
-        n_name = st.text_input("Bønne / Navn")
-        n_proc = st.selectbox("Proces", PROCESS_CHOICES, index=0)
-        n_ratio = st.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=2)
-                if st.button("Opret bønne"):
+        n_brand = st.text_input("Mærke / Risteri", key="k_new_brand")
+        n_name = st.text_input("Bønne / Navn", key="k_new_name")
+        n_proc = st.selectbox("Proces", PROCESS_CHOICES, index=0, key="k_new_proc")
+        n_ratio = st.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=2, key="k_new_ratio")
+        if st.button("Opret bønne", key="k_new_btn_create"):
             bid = slugify(f"{n_brand}-{n_name}")
             beans[bid] = {
                 "brand": (n_brand or "").strip(),
@@ -198,22 +198,18 @@ with right:
                 "target_ratio": float(n_ratio),
                 "entries": [],
             }
+            # Sæt aktiv bønne og sørg for lokal state
             st.session_state.current_bean = bid
-
-            # Sørg for at bønnen findes lokalt i state før eventuelt fetch fra Sheets
             if "beans" not in st.session_state:
                 st.session_state.beans = {}
             st.session_state.beans[bid] = beans[bid]
-
+            # Gem i Sheets hvis aktiveret
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
-
             st.success("Bønne oprettet! Klar til at logge shots.")
             st.session_state.user_id = USER_ID
             st.session_state.current_bean = bid
             st.stop()
-
-
 
 if not st.session_state.current_bean:
     st.info("Vælg en eksisterende bønne eller opret en ny.")
