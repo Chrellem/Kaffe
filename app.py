@@ -190,20 +190,26 @@ with right:
         n_proc = st.selectbox("Proces", PROCESS_CHOICES, index=0)
         n_ratio = st.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=2)
         if st.button("Opret bønne"):
-            bid = slugify(f"{n_brand}-{n_name}")
-            beans[bid] = {
-                "brand": (n_brand or "").strip(),
-                "name": (n_name or "").strip(),
-                "process": n_proc,
-                "target_ratio": float(n_ratio),
-                "entries": [],
-            }
-            st.session_state.current_bean = bid
-# Sørg for at bønnen findes lokalt i state, før vi evt. henter igen
-            if "beans" not in st.session_state:
+        bid = slugify(f"{n_brand}-{n_name}")
+        beans[bid] = {
+            "brand": (n_brand or "").strip(),
+            "name": (n_name or "").strip(),
+            "process": n_proc,
+            "target_ratio": float(n_ratio),
+            "entries": [],
+    }
+    st.session_state.current_bean = bid
+    # Sørg for at bønnen findes lokalt
+        if "beans" not in st.session_state:
             st.session_state.beans = {}
-            st.session_state.beans[bid] = beans[bid]
-            st.stop()
+        st.session_state.beans[bid] = beans[bid]
+        if USE_SHEETS:
+            upsert_bean(USER_ID, bid, beans[bid])
+        st.success("Bønne oprettet! Klar til at logge shots.")
+        st.session_state.user_id = USER_ID
+        st.session_state.current_bean = bid
+        st.stop()
+
 
 
 if not st.session_state.current_bean:
