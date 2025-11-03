@@ -1,6 +1,7 @@
 import io
 import math
 import re
+import time
 import pandas as pd
 import streamlit as st
 
@@ -28,42 +29,64 @@ if USE_SHEETS:
     import gspread
     from google.oauth2.service_account import Credentials
 
-    SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-    CREDS = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
-    GC = gspread.authorize(CREDS)
+    @st.cache_resource(show_spinner=False)
+    def get_sheet():
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], scopes=scopes
+        )
+        gc = gspread.authorize(creds)
 
-    # Åbn arket via ID hvis muligt, ellers via navn
-    # Åbn arket KUN via ID (stabilt)
-SHEET_ID = (st.secrets.get("gsheet_id") or "").strip()
-if not SHEET_ID:
-    st.error("Mangler 'gsheet_id' i Secrets. Kopiér ID-delen fra Sheets-URL'en (mellem /d/ og /edit).")
-    st.stop()
+        sheet_id = (st.secrets.get("gsheet_id") or "").strip()
+        if not sheet_id:
+            st.error("Mangler 'gsheet_id' i Secrets (kopiér ID mellem /d/ og /edit i URL'en).")
+            st.stop()
 
-try:
-    SH = GC.open_by_key(SHEET_ID)
-except gspread.exceptions.APIError as e:
-    code = getattr(getattr(e, "response", None), "status_code", None)
-    svc = st.secrets["gcp_service_account"].get("client_email", "(service-konto)")
-    st.error(f"Kunne ikke åbne arket via ID (HTTP {code or 'ukendt'}). Tjek at ID'et er korrekt, og at arket er delt som Editor med {svc}.")
-    st.stop()
+        # Simple retry på 429 (rate limit)
+        last_err = None
+        for i in range(3):
+            try:
+                sh = gc.open_by_key(sheet_id)
+                return gc, sh
+            except gspread.exceptions.APIError as e:
+                code = getattr(getattr(e, "response", None), "status_code", None)
+                last_err = (e, code)
+                if code == 429 and i < 2:
+                    time.sleep(1 + i)
+                    continue
+                break
 
-# Helper: hent/initialiser worksheet + headers
-def ws(name: str):
-    try:
-        w = SH.worksheet(name)
-    except Exception:
-        w = SH.add_worksheet(title=name, rows=1000, cols=20)
-    if name == "beans" and len(w.get_all_values()) == 0:
-        w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
-    if name == "entries" and len(w.get_all_values()) == 0:
-        w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice","notes"])
-    return w
+        e, code = last_err
+        svc = st.secrets["gcp_service_account"].get("client_email", "(service-konto)")
+        st.error(
+            f"Kunne ikke åbne arket via ID (HTTP {code or 'ukendt'}). Tjek ID og del arket som Editor med {svc}."
+        )
+        st.stop()
 
-WS_BEANS = ws("beans")
-WS_ENTRIES = ws("entries")
+    GC, SH = get_sheet()
+
+    def ws(name: str):
+        """Hent eller opret worksheet og initier headers."""
+        try:
+            w = SH.worksheet(name)
+        except Exception:
+            w = SH.add_worksheet(title=name, rows=1000, cols=20)
+        if name == "beans" and len(w.get_all_values()) == 0:
+            w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
+        if name == "entries" and len(w.get_all_values()) == 0:
+            w.append_row([
+                "user_id","bean_id","date","type","grind","dose","yield",
+                "time","target_ratio","target_out","ratio","advice","notes"
+            ])
+        return w
+
+    WS_BEANS = ws("beans")
+    WS_ENTRIES = ws("entries")
 
 # --------------------------- Helpers ---------------------------------------
-PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"]
+PROCESS_CHOICES = [
+    "Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"
+]
 
 def slugify(s: str) -> str:
     s = (s or "").strip().lower()
@@ -72,8 +95,10 @@ def slugify(s: str) -> str:
 
 def parse_float(x):
     try:
-        if x is None: return None
-        if isinstance(x, (int, float)): return float(x)
+        if x is None:
+            return None
+        if isinstance(x, (int, float)):
+            return float(x)
         x = str(x).replace(",", ".").strip()
         return float(x) if x != "" else None
     except Exception:
@@ -95,6 +120,7 @@ def recommend(ratio, time_sec, target_out):
 
 # --------------------------- Sheets I/O ------------------------------------
 if USE_SHEETS:
+    @st.cache_data(ttl=60, show_spinner=False)
     def load_user_data(user_id: str):
         beans: dict[str, dict] = {}
         for row in WS_BEANS.get_all_records():
@@ -121,6 +147,7 @@ if USE_SHEETS:
                         "Mål ud (g)": row.get("target_out",""),
                         "Faktisk ratio": row.get("ratio",""),
                         "Anbefaling": row.get("advice",""),
+                        "Noter": row.get("notes", ""),
                     })
         return beans
 
@@ -129,7 +156,10 @@ if USE_SHEETS:
         if rows:
             for idx, r in enumerate(rows[1:], start=2):
                 if len(r) >= 2 and r[0] == user_id and r[1] == bean_id:
-                    WS_BEANS.update(f"A{idx}:F{idx}", [[user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)]])
+                    WS_BEANS.update(
+                        f"A{idx}:F{idx}",
+                        [[user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)]]
+                    )
                     return
         WS_BEANS.append_row([user_id, bean_id, bean.get('brand',''), bean.get('name',''), bean.get('process',''), bean.get('target_ratio',2.0)])
 
@@ -137,7 +167,7 @@ if USE_SHEETS:
         WS_ENTRIES.append_row([
             user_id, bean_id, entry.get("Dato",""), entry.get("Type",""), entry.get("Kværn",""),
             entry.get("Dosis (g)",""), entry.get("Udbytte (g)",""), entry.get("Tid (sek)",""),
-            entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""),
+            entry.get("Target ratio",""), entry.get("Mål ud (g)",""), entry.get("Faktisk ratio",""), entry.get("Anbefaling",""), entry.get("Noter",""),
         ])
 
 # --------------------------- State -----------------------------------------
@@ -161,7 +191,7 @@ if not st.session_state.user_id:
             st.session_state.user_id = uid
             if USE_SHEETS:
                 st.session_state.beans = load_user_data(uid)
-            st.stop()
+            st.rerun()
         else:
             st.warning("Indtast et Bruger-ID for at fortsætte.")
     st.stop()
@@ -206,20 +236,16 @@ with right:
             }
             # Sæt aktiv bønne og sørg for lokal state
             st.session_state.current_bean = bid
-            if "beans" not in st.session_state:
-                st.session_state.beans = {}
             st.session_state.beans[bid] = beans[bid]
             # Gem i Sheets hvis aktiveret
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
+                try:
+                    load_user_data.clear()
+                except Exception:
+                    pass
             st.success("Bønne oprettet! Klar til at logge shots.")
-st.session_state.user_id = USER_ID
-st.session_state.current_bean = bid
-# Re-render straks så formular og historik vises
-try:
-    st.rerun()
-except Exception:
-    st.experimental_rerun()
+            st.rerun()
 
 if not st.session_state.current_bean:
     st.info("Vælg en eksisterende bønne eller opret en ny.")
@@ -262,7 +288,10 @@ with form1:
     m2.metric("Faktisk ratio", value=(f"{ratio:.2f}" if ratio else "—"))
 
     bg = {"good":"#DCFCE7","under":"#FEF3C7","over":"#FECACA","neutral":"#F5F5F4"}.get(kind,"#F5F5F4")
-    st.markdown(f"<div style='border:1px solid #e5e7eb;background:{bg};padding:12px;border-radius:12px'>{advice}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='border:1px solid #e5e7eb;background:{bg};padding:12px;border-radius:12px'>{advice}</div>",
+        unsafe_allow_html=True,
+    )
 
     colS, colR = st.columns(2)
     with colS:
@@ -283,39 +312,34 @@ with form1:
             bean.setdefault("entries", []).insert(0, entry)
             if USE_SHEETS:
                 upsert_bean(USER_ID, bean_id, bean)
-                # Udvidet schema: tilføj "notes" som sidste kolonne
+                append_entry(USER_ID, bean_id, entry)
                 try:
-                    append_entry(USER_ID, bean_id, entry)
+                    load_user_data.clear()
                 except Exception:
                     pass
             st.success("✅ Shot gemt!")
-# Bevar kontekst og re-render, så loggen opdateres
-st.session_state.user_id = USER_ID
-st.session_state.current_bean = bean_id
-try:
-    st.rerun()
-except Exception:
-    st.experimental_rerun()
+            st.rerun()
     with colR:
         if st.button("Nulstil felter", use_container_width=True):
-            st.stop()
+            st.rerun()
 
 # --------------------------- Historik --------------------------------------
 st.subheader("Historik for valgt bønne")
 entries = bean.get("entries", [])
 if USE_SHEETS and USER_ID and not entries:
-    # hent igen fra Sheets (fx efter ny deploy)
     st.session_state.beans = load_user_data(USER_ID)
     bean = st.session_state.beans.get(bean_id, bean)
     entries = bean.get("entries", [])
 
 # Kontrolleret visning til mobil: kort eller tabel
-view = st.segmented_control("Visning", options=["Kort", "Tabel"], default="Kort") if hasattr(st, 'segmented_control') else st.radio("Visning", ["Kort","Tabel"], horizontal=True)
+if hasattr(st, 'segmented_control'):
+    view = st.segmented_control("Visning", options=["Kort", "Tabel"], default="Kort")
+else:
+    view = st.radio("Visning", ["Kort","Tabel"], horizontal=True)
 limit_opt = st.selectbox("Antal viste", [5,10,25,50,"Alle"], index=1)
 
-# Sortér nyeste først (Dato er string; stoler på kronologi fra input) – alternativt kunne man parse
+# Nyeste først (entries er allerede indsat i toppen)
 data = entries[:]
-
 if limit_opt != "Alle":
     data = data[: int(limit_opt)]
 
@@ -323,12 +347,11 @@ if not data:
     st.info("Ingen shots endnu – gem et shot for at se historik.")
 else:
     if view == "Tabel":
-        import pandas as pd
         df = pd.DataFrame(data)
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         # Kortvisning – mobilvenlig
-        for i, r in enumerate(data):
+        for r in data:
             st.markdown(
                 f"""
                 <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-bottom:8px'>
@@ -350,26 +373,5 @@ else:
                 """,
                 unsafe_allow_html=True,
             )
-st.subheader("Historik for valgt bønne")
-entries = bean.get("entries", [])
-if USE_SHEETS and USER_ID and not entries:
-    # hent igen fra Sheets (fx efter ny deploy)
-    st.session_state.beans = load_user_data(USER_ID)
-    bean = st.session_state.beans.get(bean_id, bean)
-    entries = bean.get("entries", [])
-
-if not entries:
-    st.info("Ingen shots endnu – gem et shot for at se historik.")
-else:
-    df = pd.DataFrame(entries)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
-    st.download_button(
-        label="Download CSV",
-        data=buf.getvalue().encode("utf-8-sig"),
-        file_name=f"{bean['brand']}-{bean['name']}-log.csv",
-        mime="text/csv",
-    )
 
 st.caption("Simpel version: login → vælg/opret bønne → log shot → se historik. Ratio sweet spot 1.8–2.2 og 25–30 sek.")
