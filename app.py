@@ -189,7 +189,8 @@ if not st.session_state.user_id:
         uid = (user_input or "").strip()
         if uid:
             st.session_state.user_id = uid
-            if USE_SHEETS:
+            # Kun første gang efter login henter vi fra Sheets, ellers bevar lokal state
+            if USE_SHEETS and not st.session_state.beans:
                 st.session_state.beans = load_user_data(uid)
             st.rerun()
         else:
@@ -226,7 +227,13 @@ with right:
         n_proc = st.selectbox("Proces", PROCESS_CHOICES, index=0, key="k_new_proc")
         n_ratio = st.selectbox("Target ratio", [1.8,1.9,2.0,2.1,2.2], index=2, key="k_new_ratio")
         if st.button("Opret bønne", key="k_new_btn_create"):
-            bid = slugify(f"{n_brand}-{n_name}")
+            base = slugify(f"{n_brand}-{n_name}")
+            bid = base or "bean"
+            i = 2
+            while bid in beans:
+                bid = f"{base}-{i}"
+                i += 1
+
             beans[bid] = {
                 "brand": (n_brand or "").strip(),
                 "name": (n_name or "").strip(),
@@ -237,7 +244,7 @@ with right:
             # Sæt aktiv bønne og sørg for lokal state
             st.session_state.current_bean = bid
             st.session_state.beans[bid] = beans[bid]
-            # Gem i Sheets hvis aktiveret
+            # Gem i Sheets hvis aktiveret (ingen reload af data her)
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
                 try:
@@ -308,21 +315,20 @@ with st.form("shot_form"):
             "Anbefaling": advice,
             "Noter": note or "",
         }
-        # Sørg for at bønnen findes lokalt og opdater entries i state
+        # Opdater KUN lokal state her — ingen fetch, så bønnen ikke forsvinder
         st.session_state.beans.setdefault(bean_id, bean)
         st.session_state.beans[bean_id].setdefault("entries", []).insert(0, entry)
 
         if USE_SHEETS:
+            # Persistér men lad lokal state være "source of truth" for dette run
             upsert_bean(USER_ID, bean_id, st.session_state.beans[bean_id])
             append_entry(USER_ID, bean_id, entry)
             try:
                 load_user_data.clear()
             except Exception:
                 pass
-            # Indlæs fra Sheets for at sikre at bønnen eksisterer for næste run
-            st.session_state.beans = load_user_data(USER_ID)
-
         st.success("✅ Shot gemt!")
+        # Bevar kontekst før rerun
         st.session_state.user_id = USER_ID
         st.session_state.current_bean = bean_id
         st.rerun()
@@ -330,10 +336,7 @@ with st.form("shot_form"):
 # --------------------------- Historik --------------------------------------
 st.subheader("Historik for valgt bønne")
 entries = bean.get("entries", [])
-if USE_SHEETS and USER_ID and not entries:
-    st.session_state.beans = load_user_data(USER_ID)
-    bean = st.session_state.beans.get(bean_id, bean)
-    entries = bean.get("entries", [])
+# Vi undgår at overskrive lokal state her; Sheets læses først ved login/opstart
 
 # Kontrolleret visning til mobil: kort eller tabel
 if hasattr(st, 'segmented_control'):
