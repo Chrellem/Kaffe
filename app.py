@@ -33,28 +33,34 @@ if USE_SHEETS:
     GC = gspread.authorize(CREDS)
 
     # Åbn arket via ID hvis muligt, ellers via navn
-    SH = None
-    if st.secrets.get("gsheet_id"):
-        try:
-            SH = GC.open_by_key(st.secrets["gsheet_id"])
-        except Exception:
-            SH = None
-    if SH is None:
-        SH = GC.open(st.secrets["gsheet_name"])  # kræver at navnet matcher præcist
+    # Åbn arket KUN via ID (stabilt)
+SHEET_ID = (st.secrets.get("gsheet_id") or "").strip()
+if not SHEET_ID:
+    st.error("Mangler 'gsheet_id' i Secrets. Kopiér ID-delen fra Sheets-URL'en (mellem /d/ og /edit).")
+    st.stop()
 
-    def ws(name: str):
-        try:
-            w = SH.worksheet(name)
-        except Exception:
-            w = SH.add_worksheet(title=name, rows=1000, cols=20)
-        if name == "beans" and len(w.get_all_values()) == 0:
-            w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
-        if name == "entries" and len(w.get_all_values()) == 0:
-            w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice"])
-        return w
+try:
+    SH = GC.open_by_key(SHEET_ID)
+except gspread.exceptions.APIError as e:
+    code = getattr(getattr(e, "response", None), "status_code", None)
+    svc = st.secrets["gcp_service_account"].get("client_email", "(service-konto)")
+    st.error(f"Kunne ikke åbne arket via ID (HTTP {code or 'ukendt'}). Tjek at ID'et er korrekt, og at arket er delt som Editor med {svc}.")
+    st.stop()
 
-    WS_BEANS = ws("beans")
-    WS_ENTRIES = ws("entries")
+# Helper: hent/initialiser worksheet + headers
+def ws(name: str):
+    try:
+        w = SH.worksheet(name)
+    except Exception:
+        w = SH.add_worksheet(title=name, rows=1000, cols=20)
+    if name == "beans" and len(w.get_all_values()) == 0:
+        w.append_row(["user_id","bean_id","brand","name","process","target_ratio"])
+    if name == "entries" and len(w.get_all_values()) == 0:
+        w.append_row(["user_id","bean_id","date","type","grind","dose","yield","time","target_ratio","target_out","ratio","advice","notes"])
+    return w
+
+WS_BEANS = ws("beans")
+WS_ENTRIES = ws("entries")
 
 # --------------------------- Helpers ---------------------------------------
 PROCESS_CHOICES = ["Washed","Natural","Honey","Anaerob","CM","Giling Basah","Wet-Hulled","Andet"]
