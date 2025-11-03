@@ -207,9 +207,13 @@ with right:
             if USE_SHEETS:
                 upsert_bean(USER_ID, bid, beans[bid])
             st.success("Bønne oprettet! Klar til at logge shots.")
-            st.session_state.user_id = USER_ID
-            st.session_state.current_bean = bid
-            st.stop()
+st.session_state.user_id = USER_ID
+st.session_state.current_bean = bid
+# Re-render straks så formular og historik vises
+try:
+    st.rerun()
+except Exception:
+    st.experimental_rerun()
 
 if not st.session_state.current_bean:
     st.info("Vælg en eksisterende bønne eller opret en ny.")
@@ -279,10 +283,13 @@ with form1:
                 except Exception:
                     pass
             st.success("✅ Shot gemt!")
-            # Bevar kontekst
-            st.session_state.user_id = USER_ID
-            st.session_state.current_bean = bean_id
-            st.stop()
+# Bevar kontekst og re-render, så loggen opdateres
+st.session_state.user_id = USER_ID
+st.session_state.current_bean = bean_id
+try:
+    st.rerun()
+except Exception:
+    st.experimental_rerun()
     with colR:
         if st.button("Nulstil felter", use_container_width=True):
             st.stop()
