@@ -181,26 +181,54 @@ if "current_bean" not in st.session_state:
 # --------------------------- Login -----------------------------------------
 st.title("Espresso Advisor – simpel log")
 
+# Deep-link auto-login: ?user=<alias>
+try:
+    qp = st.query_params
+    user_from_url = qp.get("user", None)
+except Exception:
+    try:
+        user_from_url = st.experimental_get_query_params().get("user", [None])[0]
+    except Exception:
+        user_from_url = None
+
+if user_from_url and ("user_id" not in st.session_state or not st.session_state.user_id):
+    st.session_state.user_id = user_from_url
+    if USE_SHEETS:
+        st.session_state.beans = load_user_data(user_from_url)
+    st.rerun()
+
 if not st.session_state.user_id:
     st.markdown("### Log ind")
-    st.caption("Skriv et brugernavn/alias. Dine bønner og shots gemmes under dette ID.")
+    st.caption("Skriv et brugernavn/alias. Dine bønner og shots gemmes i Google Sheets under dette ID.")
     user_input = st.text_input("Bruger-ID", placeholder="fx jonas_home")
-    if st.button("Log ind", type="primary"):
-        uid = (user_input or "").strip()
-        if uid:
-            st.session_state.user_id = uid
-            # Kun første gang efter login henter vi fra Sheets, ellers bevar lokal state
-            if USE_SHEETS and not st.session_state.beans:
-                st.session_state.beans = load_user_data(uid)
-            st.rerun()
-        else:
-            st.warning("Indtast et Bruger-ID for at fortsætte.")
+    colL, colR = st.columns([1,1])
+    with colL:
+        if st.button("Log ind", type="primary"):
+            uid = (user_input or "").strip()
+            if uid:
+                st.session_state.user_id = uid
+                if USE_SHEETS:
+                    st.session_state.beans = load_user_data(uid)
+                # skriv alias i URL så appen kan åbnes direkte næste gang
+                try:
+                    st.query_params["user"] = uid
+                except Exception:
+                    st.experimental_set_query_params(user=uid)
+                st.rerun()
+            else:
+                st.warning("Indtast et Bruger-ID for at fortsætte.")
     st.stop()
+
+# Hvis vi allerede er logget ind men ingen data i denne session → hent fra Sheets
+if USE_SHEETS and st.session_state.user_id and not st.session_state.beans:
+    st.session_state.beans = load_user_data(st.session_state.user_id)
 
 USER_ID = st.session_state.user_id
 beans = st.session_state.beans
 
 # --------------------------- Bean vælger / opret ---------------------------
+st.caption(f"Logget ind som **{st.session_state.user_id}** · delbart link: ?user={st.session_state.user_id}")
+
 left, right = st.columns([1,1])
 with left:
     if beans:
