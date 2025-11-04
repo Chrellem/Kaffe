@@ -201,6 +201,25 @@ if not st.session_state.user_id:
     st.markdown("### Log ind")
     st.caption("Skriv et brugernavn/alias. Dine bønner og shots gemmes i Google Sheets under dette ID.")
     user_input = st.text_input("Bruger-ID", placeholder="fx jonas_home")
+
+    # Hjælp: vælg et eksisterende alias fundet i arket
+    if USE_SHEETS:
+        @st.cache_data(ttl=60, show_spinner=False)
+        def list_user_ids():
+            try:
+                vals = WS_BEANS.get_all_values()
+                if not vals or len(vals) < 2:
+                    return []
+                # kolonne A antages at være 'user_id'
+                return sorted(list({r[0] for r in vals[1:] if r and r[0]}))
+            except Exception:
+                return []
+        existing_users = list_user_ids()
+        if existing_users:
+            picked = st.selectbox("Eller vælg en eksisterende bruger fra arket", ["(vælg)"] + existing_users)
+            if picked != "(vælg)":
+                user_input = picked
+
     colL, colR = st.columns([1,1])
     with colL:
         if st.button("Log ind", type="primary"):
@@ -209,14 +228,28 @@ if not st.session_state.user_id:
                 st.session_state.user_id = uid
                 if USE_SHEETS:
                     st.session_state.beans = load_user_data(uid)
-                # skriv alias i URL så appen kan åbnes direkte næste gang
-                try:
-                    st.query_params["user"] = uid
-                except Exception:
-                    st.experimental_set_query_params(user=uid)
+                    # Skriv alias i URL så du kan bogmærke
+                    try:
+                        st.query_params["user"] = uid
+                    except Exception:
+                        st.experimental_set_query_params(user=uid)
                 st.rerun()
             else:
                 st.warning("Indtast et Bruger-ID for at fortsætte.")
+    # Lille diagnose ved login hvis Sheets er aktivt
+    if USE_SHEETS:
+        with st.expander("🔧 Diagnose (Google Sheets)", expanded=False):
+            try:
+                sheet_title = SH.title
+                st.write(f"Sheet: **{sheet_title}** (ID sløret)")
+                st.write("Arbejdssheets:", [w.title for w in SH.worksheets()])
+                beans_head = WS_BEANS.row_values(1)
+                entries_head = WS_ENTRIES.row_values(1)
+                st.write("beans header:", beans_head)
+                st.write("entries header:", entries_head)
+                st.write("Fundne brugere:", existing_users)
+            except Exception as e:
+                st.error(f"Kan ikke læse diagnose: {e}")
     st.stop()
 
 # Hvis vi allerede er logget ind men ingen data i denne session → hent fra Sheets
@@ -228,6 +261,35 @@ beans = st.session_state.beans
 
 # --------------------------- Bean vælger / opret ---------------------------
 st.caption(f"Logget ind som **{st.session_state.user_id}** · delbart link: ?user={st.session_state.user_id}")
+
+# Ekstra diagnose inde i appen
+if USE_SHEETS:
+    with st.expander("🔧 Diagnose / Reparer Sheets", expanded=False):
+        exp_col1, exp_col2 = st.columns(2)
+        with exp_col1:
+            try:
+                st.write("Sheets:", [w.title for w in SH.worksheets()])
+                st.write("beans header:", WS_BEANS.row_values(1))
+                st.write("entries header:", WS_ENTRIES.row_values(1))
+                # antal rækker for denne bruger
+                import itertools
+                beans_rows = WS_BEANS.get_all_records()
+                entries_rows = WS_ENTRIES.get_all_records()
+                nb = sum(1 for r in beans_rows if r.get("user_id") == USER_ID)
+                ne = sum(1 for r in entries_rows if r.get("user_id") == USER_ID)
+                st.write(f"Rækker for {USER_ID}: beans={nb}, entries={ne}")
+            except Exception as e:
+                st.error(f"Diagnosefejl: {e}")
+        with exp_col2:
+            if st.button("🔁 Genindlæs fra Sheets nu"):
+                try:
+                    if 'load_user_data' in globals():
+                        load_user_data.clear()
+                except Exception:
+                    pass
+                st.session_state.beans = load_user_data(USER_ID)
+                st.success("Genindlæst fra Sheets")
+                st.rerun()
 
 left, right = st.columns([1,1])
 with left:
